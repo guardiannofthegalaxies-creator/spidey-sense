@@ -1,0 +1,124 @@
+// ==UserScript==
+// @name         JS File Harvester
+// @namespace    jsvulnscan
+// @version      1.0
+// @description  Passively collects every JS file URL loaded while you browse, across pages/sessions, with a floating download button
+// @match        *://*/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const STORAGE_KEY = 'jsHarvester_urls';
+
+    function loadStored() {
+        try {
+            return new Set(JSON.parse(GM_getValue(STORAGE_KEY, '[]')));
+        } catch (e) {
+            return new Set();
+        }
+    }
+
+    function saveStored(set) {
+        GM_setValue(STORAGE_KEY, JSON.stringify(Array.from(set)));
+    }
+
+    let collected = loadStored();
+
+    function isJsUrl(url) {
+        return url.split('?')[0].endsWith('.js');
+    }
+
+    function addUrl(url) {
+        if (!url || !isJsUrl(url)) return;
+        if (!collected.has(url)) {
+            collected.add(url);
+            saveStored(collected);
+            updateBadge();
+        }
+    }
+
+    // 1. Capture everything already loaded by the time this script runs
+    performance.getEntriesByType('resource').forEach((entry) => {
+        if (entry.initiatorType === 'script' || isJsUrl(entry.name)) {
+            addUrl(entry.name);
+        }
+    });
+
+    // 2. Keep watching for anything loaded after this point (lazy-loaded
+    //    chunks, scripts injected after you click around, etc.)
+    const observer = new PerformanceObserver((list) => {
+        list.getEntries().forEach((entry) => {
+            if (entry.initiatorType === 'script' || isJsUrl(entry.name)) {
+                addUrl(entry.name);
+            }
+        });
+    });
+    observer.observe({ type: 'resource', buffered: true });
+
+    // 3. Floating badge + controls
+    function updateBadge() {
+        const badge = document.getElementById('js-harvester-badge');
+        if (badge) badge.textContent = `JS files: ${collected.size}`;
+    }
+
+    function downloadList() {
+        const text = Array.from(collected).sort().join('\n');
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'js_file_list.txt';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    function clearList() {
+        collected = new Set();
+        saveStored(collected);
+        updateBadge();
+    }
+
+    function attachUI() {
+        if (!document.body) {
+            setTimeout(attachUI, 200);
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.style.cssText = `
+            position: fixed; bottom: 16px; right: 16px; z-index: 2147483647;
+            background: #1f2937; color: #fff; font-family: sans-serif;
+            font-size: 13px; padding: 10px 14px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+            display: flex; align-items: center; gap: 10px;
+        `;
+
+        const badge = document.createElement('span');
+        badge.id = 'js-harvester-badge';
+        badge.textContent = `JS files: ${collected.size}`;
+        container.appendChild(badge);
+
+        const downloadBtn = document.createElement('button');
+        downloadBtn.textContent = 'Download JS List';
+        downloadBtn.style.cssText =
+            'background:#2563eb;color:#fff;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;';
+        downloadBtn.onclick = downloadList;
+        container.appendChild(downloadBtn);
+
+        const clearBtn = document.createElement('button');
+        clearBtn.textContent = 'Clear';
+        clearBtn.style.cssText =
+            'background:#6b7280;color:#fff;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;';
+        clearBtn.onclick = clearList;
+        container.appendChild(clearBtn);
+
+        document.body.appendChild(container);
+    }
+
+    attachUI();
+})();
